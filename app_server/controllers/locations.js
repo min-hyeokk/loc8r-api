@@ -1,10 +1,11 @@
+//app_server/controllers/location.js
 var request = require('request');
 
 const apiOptions = {
   server: 'http://localhost:3000'
 };
 if(process.env.NODE_ENV === 'production'){
-  apiOptions.server = 'http://localhost:3000';
+  apiOptions.server = 'https://loc8r-api-90fz.onrender.com';
 }
 
 const homelist = (req, res) => {
@@ -21,14 +22,30 @@ const homelist = (req, res) => {
   };
   request(
     requestOptions,
-    (err, {statusCode}, body) => {
+    (err, response, body) => { // 👈 {statusCode} 대신 response 전체를 받도록 수정
       let data = [];
-      if (statusCode === 200 && body.length) {
-        data = body.map( (item) => {
-          item.distance = formatDistance(item.distance);
-          return item;
-        });
-      };
+      
+      // 1. 네트워크 오류 처리 (TypeError 방지)
+      if (err) {
+        console.error("API 호출 네트워크 오류:", err.message);
+        renderHomepage(req, res, { message: "API 서버에 연결할 수 없습니다." });
+        return;
+      }
+      
+      // 2. response 유효성 확인 및 statusCode 사용
+      if (response) {
+        if (response.statusCode === 200 && body.length) {
+          data = body.map( (item) => {
+            item.distance = formatDistance(item.distance);
+            return item;
+          });
+        };
+      } else {
+        // response 객체가 없는 경우
+        renderHomepage(req, res, { message: "API 응답을 받지 못했습니다." });
+        return;
+      }
+      
       renderHomepage(req, res, data);
     }
   );
@@ -49,7 +66,12 @@ const formatDistance = (distance) => {
 const renderHomepage = (req, res, responseBody) => {
   let message = null;
   if (!(responseBody instanceof Array)) {
-    message = "API lookup error";
+    // API 호출 오류가 발생했을 때 message 객체가 들어올 수 있음
+    if (responseBody && responseBody.message) {
+      message = responseBody.message;
+    } else {
+      message = "API lookup error";
+    }
     responseBody = [];
   } else {
     if (!responseBody.length) {
@@ -103,10 +125,11 @@ const showError = (req, res, status) => {
   });
 };
 
-const renderReviewForm = (req, res, {name}) => {
+const renderReviewForm = function (req, res, {name}) {
   res.render('location-review-form', {
     title: `Review ${name} on Loc8r`,
-    pageHeader: { title: `Review ${name}` }
+    pageHeader: { title: `Review ${name}` },
+    error: req.query.err
   });
 };
 
@@ -119,16 +142,30 @@ const getLocationInfo = (req, res, callback) => {
   };
   request(
     requestOptions,
-    (err, {statusCode}, body) => {
-      let data = body;
-      if (statusCode === 200) {
-        data.coords = {
-          lng : body.coords[0],
-          lat : body.coords[1]
-        };
-        callback(req, res, data);
+    (err, response, body) => { // 👈 {statusCode} 대신 response 전체를 받도록 수정
+      
+      // 1. 네트워크 오류 처리
+      if (err) {
+        console.error("API 호출 네트워크 오류:", err.message);
+        showError(req, res, 503); // Service Unavailable
+        return;
+      }
+      
+      // 2. response 유효성 확인 및 statusCode 사용
+      if (response) {
+        let data = body;
+        if (response.statusCode === 200) {
+          data.coords = {
+            lng : body.coords[0],
+            lat : body.coords[1]
+          };
+          callback(req, res, data);
+        } else {
+          showError(req, res, response.statusCode);
+        }
       } else {
-        showError(req, res, statusCode);
+         // response 객체가 없는 경우
+         showError(req, res, 500);
       }
     }
   );
@@ -147,7 +184,48 @@ const addReview = (req, res) => {
   );
 };
 
-const doAddReview = (req, res) => {  
+const doAddReview = (req, res) => {
+  const locationid = req.params.locationid;
+  const path = `/api/locations/${locationid}/reviews`;
+  const postdata = {
+    author: req.body.name,
+    rating: parseInt(req.body.rating, 10),
+    reviewText: req.body.review
+  };
+  const requestOptions = {
+    url: `${apiOptions.server}${path}`,
+    method: 'POST',
+    json: postdata
+  };
+  if (!postdata.author || !postdata.rating || !postdata.reviewText) {
+    res.redirect(`/location/${locationid}/review/new?err=val`);
+  } else {
+    request(
+      requestOptions,
+      (err, response, body) => { // 👈 {statusCode}와 {name} 대신 response와 body 전체를 받도록 수정
+        
+        // 1. 네트워크 오류 처리
+        if (err) {
+          console.error("API 호출 네트워크 오류:", err.message);
+          showError(req, res, 503); 
+          return;
+        }
+
+        // 2. response 유효성 확인 및 statusCode 사용
+        if (response) {
+            if (response.statusCode === 201) {
+              res.redirect(`/location/${locationid}`);
+            } else if (response.statusCode === 400 && body && body.name === 'ValidationError') {
+              res.redirect(`/location/${locationid}/review/new?err=val`);
+            } else {
+              showError(req, res, response.statusCode);
+            }
+        } else {
+           showError(req, res, 500);
+        }
+      }
+    );
+  }
 };
 
 module.exports = {
