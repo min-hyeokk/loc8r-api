@@ -1,8 +1,11 @@
 
 import mongoose from 'mongoose';
 import readline from 'readline';
+mongoose.set("strictQuery", false);
 
-const dbURI = 'mongodb://localhost/Loc8r';
+//const dbURI = 'mongodb://localhost/Loc8r';
+const dbPassword = process.env.MONGODB_PASSWORD;
+const dbURI = `mongodb+srv://kdbmh0916_db_user:${dbPassword}@cluster0.b3p21ir.mongodb.net/Loc8r`;
 
 const connect = () => {
   setTimeout(() => mongoose.connect(dbURI), 1000);
